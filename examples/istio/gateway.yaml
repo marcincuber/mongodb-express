@@ -1,0 +1,29 @@
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: mongo-express
+  # Keep the Gateway and TLS Secret in the ingress workload's namespace.
+  namespace: istio-system
+spec:
+  # Match the labels on your existing Istio ingress gateway workload.
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http-mongo-express
+        protocol: HTTP
+      hosts:
+        - mongo-express-istio/mongo-express.example.com
+      tls:
+        httpsRedirect: true
+    - port:
+        number: 443
+        name: https-mongo-express
+        protocol: HTTPS
+      hosts:
+        - mongo-express-istio/mongo-express.example.com
+      tls:
+        mode: SIMPLE
+        credentialName: mongo-express-ui-tls
+        minProtocolVersion: TLSV1_2

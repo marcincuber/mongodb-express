@@ -1,0 +1,28 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: mongo-express
+  namespace: mongo-express-istio
+spec:
+  hosts:
+    - mongo-express.example.com
+  gateways:
+    - istio-system/mongo-express
+  # Make the route visible to the Gateway in the ingress namespace.
+  exportTo:
+    - istio-system
+  http:
+    - name: mongo-express
+      match:
+        - uri:
+            prefix: /
+      # Preserve application paths. Leave the request timeout at Istio's default
+      # (disabled) so long-running database requests are not cut short here.
+      # Avoid retrying administrative requests that may change database data.
+      retries:
+        attempts: 0
+      route:
+        - destination:
+            host: mongo-express.mongo-express-istio.svc.cluster.local
+            port:
+              number: 8081

@@ -119,79 +119,27 @@ aws ecr describe-images \
 printf '%s\n' "$IMAGE_URI"
 ```
 
-## EKS example: DocumentDB with TLS
+## EKS deployment examples
 
-This example targets an existing EKS cluster and an existing instance-based DocumentDB cluster with TLS enabled. It uses a private `ClusterIP` Service accessed through `kubectl port-forward`, a Secret for credentials, and a ConfigMap for AWS's public CA bundle. It does not provision AWS infrastructure.
+Both examples deploy the ECR image and connect to an existing instance-based DocumentDB cluster with validated TLS. Each directory contains complete, independent YAML manifests, a credentials template, and deployment instructions. Run commands from the project root.
 
-Before deploying:
+| Example | Browser access | Application namespace |
+| --- | --- | --- |
+| [Port-forward](examples/port-forward/README.md) | Private Service through `kubectl port-forward` | `mongo-express` |
+| [Istio](examples/istio/README.md) | HTTPS Gateway and VirtualService | `mongo-express-istio` |
+
+The examples use separate namespaces and credentials, so they can be deployed and removed independently. Follow the selected example's README to create its CA ConfigMap and Secret before deploying. Neither example provisions AWS infrastructure.
+
+### EKS prerequisites
 
 - Configure AWS CLI credentials and `kubectl` for the intended EKS cluster.
-- Ensure pods can resolve and reach the DocumentDB cluster endpoint and discovered instance endpoints on TCP 27017. Configure VPC routing, security groups (node or pod groups, as applicable), network ACLs, and any Kubernetes network policies. DocumentDB's security group must allow the actual pod traffic source.
-- Ensure EKS nodes, or the Fargate pod execution role, can pull from ECR. This username/password example needs no application IAM role.
-- Use a database account with the required permissions. Admin mode lists all databases; set it to `false` and include a database name in the URI if access should be limited to one database.
+- Use an existing DocumentDB cluster with TLS enabled. Pods must resolve and reach the cluster and discovered instance endpoints on TCP 27017. Configure VPC routing, security groups, network ACLs, and any Kubernetes network policies for the actual node or pod traffic source.
+- Ensure EKS node roles, or the Fargate execution role, can pull the unique image from ECR. This username/password database example needs no application IAM role.
+- Use a database account with the required permissions. Admin mode lists all databases; disable it and include a database name in the URI to limit access to one database.
 
-### 1. Build, tag, and push the image to ECR
+Both examples follow [AWS's DocumentDB connection guidance](https://docs.aws.amazon.com/documentdb/latest/developerguide/connect_programmatically.html). They mount the public AWS CA bundle and explicitly set `ME_CONFIG_MONGODB_TLS_ALLOW_CERTS=false` to validate certificates. DocumentDB compatibility mode is experimental; not every MongoDB administrative operation is supported.
 
-Complete [Build, tag, and push to Amazon ECR](#build-tag-and-push-to-amazon-ecr) above. Keep `$IMAGE_URI` available for the Deployment's `image:` value in step 3.
-
-### 2. Create configuration and credentials
-
-```sh
-kubectl apply -f k8s/namespace.yaml
-
-mkdir -p .certs
-curl --fail --silent --show-error --location \
-  https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
-  -o .certs/global-bundle.pem
-
-kubectl -n mongo-express create configmap documentdb-ca \
-  --from-file=global-bundle.pem=.certs/global-bundle.pem \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-cp k8s/documentdb-secrets.env.example .env.eks
-chmod 600 .env.eks
-```
-
-Edit `.env.eks` with the real cluster endpoint, URI-encoded database credentials, web login password, and independently generated cookie/session secrets. Both `.env.eks` and `.certs/` are ignored by Git. Keep the URI on one line without shell quotes. Then create the Secret:
-
-```sh
-kubectl -n mongo-express create secret generic mongo-express-secrets \
-  --from-env-file=.env.eks \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-The URI includes `authSource=admin`, `tls=true`, `replicaSet=rs0`, `readPreference=secondaryPreferred`, and `retryWrites=false`, following [AWS's DocumentDB connection guidance](https://docs.aws.amazon.com/documentdb/latest/developerguide/connect_programmatically.html). The Deployment enables upstream's experimental DocumentDB compatibility mode and explicitly enables CA validation using the mounted AWS bundle. MongoDB compatibility does not guarantee every administrative operation is supported by DocumentDB.
-
-### 3. Deploy and access
-
-Replace the `image:` value in `k8s/documentdb-tls.yaml` with the full unique `$IMAGE_URI` printed by `printf '%s\n' "$IMAGE_URI"`. Update this value on every release; changing it triggers a rollout and lets `IfNotPresent` cache images safely without reusing an older build under the same tag. Then:
-
-```sh
-kubectl apply -f k8s/documentdb-tls.yaml
-kubectl -n mongo-express rollout status deployment/mongo-express --timeout=180s
-kubectl -n mongo-express port-forward service/mongo-express 8081:8081
-```
-
-Visit <http://localhost:8081> and enter the web credentials. The forwarded connection uses your Kubernetes API access; the pod-to-DocumentDB connection uses validated TLS. Keep this administration UI private. For shared access, put it behind your organization's authenticated HTTPS access layer.
-
-The `/status` readiness probe checks the web application's HTTP response. In this tag it returns success even when the database connection fails; it does not verify database availability. TCP startup/liveness probes check the web listener. Verify database connectivity through the UI and logs. If the initial database connection fails, fix the connection settings or network access and restart the Deployment. Inspect failures with:
-
-```sh
-kubectl -n mongo-express get pods
-kubectl -n mongo-express logs deployment/mongo-express
-```
-
-After changing Secret environment variables or rotating the CA bundle, restart the Deployment:
-
-```sh
-kubectl -n mongo-express rollout restart deployment/mongo-express
-```
-
-Remove the example and its namespace when finished:
-
-```sh
-kubectl delete namespace mongo-express
-```
+The `/status` readiness probe checks the web application and can succeed when the database is unavailable. Confirm database connectivity in the UI and logs. After an initial connection failure, fix the settings or network access and restart the Deployment using the command in the selected example.
 
 ## Updating upstream
 
