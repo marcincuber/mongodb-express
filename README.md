@@ -26,6 +26,121 @@ docker run --rm --name mongo-express \
 
 Open <http://localhost:8081>. The sample URI uses `host.docker.internal`, which Docker Desktop provides for reaching a database on the host. On Linux, add `--add-host=host.docker.internal:host-gateway`, or use your database's reachable hostname. For another container, attach both to the same Docker network and use its service name.
 
+### Run with environment variables only
+
+After building `mongo-express:local`, configure it directly with Docker's `-e` options. This example connects to an existing MongoDB instance and requires no `.env` file or custom `config.js`:
+
+```sh
+docker run --rm --name mongo-express \
+  -p 127.0.0.1:8081:8081 \
+  -e ME_CONFIG_MONGODB_URL='mongodb://DB_USER:ENCODED_DB_PASSWORD@host.docker.internal:27017/?authSource=admin' \
+  -e ME_CONFIG_MONGODB_ENABLE_ADMIN=true \
+  -e ME_CONFIG_BASICAUTH_ENABLED=true \
+  -e ME_CONFIG_BASICAUTH_USERNAME=mongo-express \
+  -e ME_CONFIG_BASICAUTH_PASSWORD='REPLACE_WITH_A_STRONG_WEB_PASSWORD' \
+  -e ME_CONFIG_SITE_COOKIESECRET="$(openssl rand -hex 32)" \
+  -e ME_CONFIG_SITE_SESSIONSECRET="$(openssl rand -hex 32)" \
+  -e VCAP_APP_HOST=0.0.0.0 \
+  -e PORT=8081 \
+  mongo-express:local
+```
+
+Replace the MongoDB URI and web password before running. Percent-encode the database username and password in the URI; these are separate from the web login credentials. For a database without authentication, use `mongodb://host.docker.internal:27017/`. The two OpenSSL commands generate independent cookie and session secrets. Apply the networking guidance above, then open <http://localhost:8081> and sign in with the web credentials.
+
+### Run MongoDB and mongo-express together with Docker CLI
+
+For a single-command setup, run:
+
+```sh
+./scripts/run-local.sh
+```
+
+The script builds the mongo-express image, creates a shared network and persistent MongoDB volume, generates credentials, starts both containers, and waits for their health checks. It prints the browser URL and web login details when ready. It requires Docker and OpenSSL and can be executed from any working directory.
+
+Credentials are saved with permissions `600` in the Git-ignored `.env.mongo-express-local` file. Rerunning the script reuses those credentials and the database volume, starts MongoDB if it was stopped, and recreates the UI container using the latest local build. Keep the credentials file while retaining database data.
+
+To use another browser port or create a separate demo:
+
+```sh
+DEMO_PORT=8082 ./scripts/run-local.sh
+DEMO_NAME=my-mongo-demo DEMO_PORT=8083 ./scripts/run-local.sh
+```
+
+The default containers are `mongo-express-local-db` and `mongo-express-local-ui`; the network is `mongo-express-local` and the volume is `mongo-express-local-data`. The script refuses to replace resources it did not create. To stop its default containers while retaining data and credentials:
+
+```sh
+docker stop mongo-express-local-ui mongo-express-local-db
+```
+
+The following commands show the equivalent manual setup with separate `mongo-express-demo` resource names.
+
+After building `mongo-express:local`, run this local development example in one shell session. It creates an authenticated MongoDB 8.0 container, a persistent data volume, and a shared network. Passwords are generated as hexadecimal strings so the database password can be used directly in the connection URI.
+
+```sh
+export DEMO_MONGO_USER=mongoexpress
+export DEMO_MONGO_PASSWORD="$(openssl rand -hex 24)"
+export DEMO_WEB_USER=admin
+export DEMO_WEB_PASSWORD="$(openssl rand -hex 24)"
+
+docker network create mongo-express-demo
+docker volume create mongo-express-demo-data
+
+docker run -d --name mongo-express-demo-db \
+  --network mongo-express-demo --network-alias mongo \
+  --mount type=volume,source=mongo-express-demo-data,target=/data/db \
+  -e MONGO_INITDB_ROOT_USERNAME="$DEMO_MONGO_USER" \
+  -e MONGO_INITDB_ROOT_PASSWORD="$DEMO_MONGO_PASSWORD" \
+  --health-cmd='mongosh --quiet --host mongo --username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "quit(db.adminCommand({ ping: 1 }).ok ? 0 : 1)"' \
+  --health-interval=2s --health-timeout=5s --health-retries=30 \
+  mongo:8.0
+```
+
+Wait up to approximately one minute for authenticated database access, then start mongo-express on the same network:
+
+```sh
+for attempt in {1..30}; do
+  mongo_health="$(docker inspect --format '{{.State.Health.Status}}' mongo-express-demo-db)"
+  [ "$mongo_health" = healthy ] && break
+  sleep 2
+done
+
+[ "$mongo_health" = healthy ] &&
+docker run -d --name mongo-express-demo-ui \
+  --network mongo-express-demo \
+  -p 127.0.0.1:8081:8081 \
+  -e ME_CONFIG_MONGODB_URL="mongodb://${DEMO_MONGO_USER}:${DEMO_MONGO_PASSWORD}@mongo:27017/?authSource=admin" \
+  -e ME_CONFIG_MONGODB_ENABLE_ADMIN=true \
+  -e ME_CONFIG_BASICAUTH_ENABLED=true \
+  -e ME_CONFIG_BASICAUTH_USERNAME="$DEMO_WEB_USER" \
+  -e ME_CONFIG_BASICAUTH_PASSWORD="$DEMO_WEB_PASSWORD" \
+  -e ME_CONFIG_SITE_COOKIESECRET="$(openssl rand -hex 32)" \
+  -e ME_CONFIG_SITE_SESSIONSECRET="$(openssl rand -hex 32)" \
+  mongo-express:local
+```
+
+Open <http://localhost:8081>. Display the web login credentials with:
+
+```sh
+printf 'Web username: %s\nWeb password: %s\n' "$DEMO_WEB_USER" "$DEMO_WEB_PASSWORD"
+```
+
+MongoDB is reachable as `mongo:27017` inside the shared Docker network. Only the UI port is published to the host, so this works on Docker Desktop and Linux without `host.docker.internal`. If startup fails, inspect `docker logs mongo-express-demo-db` and `docker logs mongo-express-demo-ui`.
+
+The [official MongoDB image](https://github.com/docker-library/docs/blob/master/mongo/README.md#environment-variables) creates the root account only when the data directory is empty. Retain the original database credentials when reusing the volume; changing the initialization variables does not change an existing account's password.
+
+Remove the demo containers and network when finished:
+
+```sh
+docker rm -f mongo-express-demo-ui mongo-express-demo-db
+docker network rm mongo-express-demo
+```
+
+To also delete the demo database's stored data:
+
+```sh
+docker volume rm mongo-express-demo-data
+```
+
 ## Environment variables
 
 All variables implemented by the pinned upstream tag are supported unchanged, including MongoDB/TLS options, Basic/OIDC authentication, site HTTPS, UI options, `PORT`, `VCAP_APP_HOST`, `VCAP_SERVICES`, and supported `_FILE` variants. [.env.example](.env.example) lists them. The authoritative references are upstream's [configuration](https://github.com/mongo-express/mongo-express/blob/v1.1.0-rc-4/config.default.js) and [README](https://github.com/mongo-express/mongo-express/blob/v1.1.0-rc-4/README.md#usage-docker).
