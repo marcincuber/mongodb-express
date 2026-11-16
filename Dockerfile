@@ -14,14 +14,50 @@ ENV CYPRESS_INSTALL_BINARY=0 \
     MONGOMS_DISABLE_POSTINSTALL=1 \
     HUSKY=0 \
     DEDUPED=yes
-COPY scripts/patch-dependencies.cjs /tmp/patch-dependencies.cjs
 # Retain OIDC and apply security fixes to this tag's older dependency lockfile.
-RUN yarn install --immutable \
-    && node /tmp/patch-dependencies.cjs \
-    && yarn install \
-    && yarn build \
-    && yarn workspaces focus --production \
-    && rm -rf lib/scripts node_modules/.cache
+RUN <<'BUILD'
+set -eu
+yarn install --immutable
+node --input-type=commonjs <<'JS'
+const fs = require('node:fs');
+const packageFile = 'package.json';
+const pkg = JSON.parse(fs.readFileSync(packageFile, 'utf8'));
+const oidcPackage = 'express-openid-connect';
+const oidcVersion = pkg.dependencies?.[oidcPackage] ?? pkg.devDependencies?.[oidcPackage];
+
+if (!oidcVersion) {
+  throw new Error('Upstream no longer declares express-openid-connect; review OIDC support before building.');
+}
+
+// Retain OIDC when Yarn prunes development packages.
+pkg.dependencies ??= {};
+pkg.dependencies[oidcPackage] = oidcVersion;
+if (pkg.devDependencies) delete pkg.devDependencies[oidcPackage];
+
+// CVE-2026-111181: retain the application's body-parser 2.x major.
+pkg.dependencies['body-parser'] = '2.4.0';
+pkg.resolutions = {
+  ...pkg.resolutions,
+  // CVE-2026-19481 and CVE-2026-19484: patch the multipart parser.
+  '@fastify/busboy': '3.2.1',
+  // CVE-2026-111181: Express 4 needs the patched 1.x copy.
+  'express/body-parser': '1.20.9',
+  // CVE-2026-118772: retain Joi 17 with its security fix.
+  joi: '17.13.9',
+  // CVE-2026-4800: patch Lodash within its existing major.
+  lodash: '4.18.0',
+  // CVE-2026-4867: patch Express 4's route matcher within 0.1.x.
+  'path-to-regexp': '0.1.13',
+  // CVE-2026-90711 (CRITICAL): patch Express's proxy address dependency.
+  'proxy-addr': '2.0.8',
+};
+fs.writeFileSync(packageFile, JSON.stringify(pkg, null, 2) + '\n');
+JS
+yarn install
+yarn build
+yarn workspaces focus --production
+rm -rf lib/scripts node_modules/.cache
+BUILD
 
 FROM ${NODE_IMAGE} AS runtime
 # hadolint ignore=DL3018

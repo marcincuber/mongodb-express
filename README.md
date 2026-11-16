@@ -4,7 +4,7 @@ Build [mongo-express](https://github.com/mongo-express/mongo-express) directly f
 
 The image includes OIDC dependencies, compiled frontend assets, and production packages. It runs as UID/GID 1000 with `tini` forwarding signals to Node.js.
 
-The runtime omits npm and Yarn. [scripts/patch-dependencies.cjs](scripts/patch-dependencies.cjs) retains OIDC support and applies dependency security fixes before building frontend assets and installing production packages. Each version override documents the vulnerability it fixes. The upstream application and configuration remain unchanged.
+The build is self-contained in the [Dockerfile](Dockerfile): it downloads the upstream tag, retains OIDC support, applies dependency security fixes, and builds frontend assets before installing production packages. Each version override documents the vulnerability it fixes. The runtime omits npm and Yarn. The upstream application and configuration remain unchanged.
 
 ## Build and run
 
@@ -203,4 +203,4 @@ docker build \
   -t mongo-express:1.1.0-rc-4 .
 ```
 
-Review upstream configuration changes and refresh `.env.example` when updating. Review the security overrides in [scripts/patch-dependencies.cjs](scripts/patch-dependencies.cjs) when upstream dependencies change. `NODE_IMAGE` is also a build argument; it must satisfy upstream's Node.js engine requirements. Publish a new unique image tag and update the EKS example's `image:` value for every build.
+Review upstream configuration changes and refresh `.env.example` when updating. Review the security overrides in the [Dockerfile](Dockerfile) when upstream dependencies change. `NODE_IMAGE` is also a build argument; it must satisfy upstream's Node.js engine requirements. Publish a new unique image tag and update the EKS example's `image:` value for every build.

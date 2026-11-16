@@ -35,6 +35,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Test scan report handling
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Build fresh image
         run: docker build --pull --no-cache --platform "linux/${{ matrix.arch }}" -t "$IMAGE" .
       - name: Scan OS and application packages; block HIGH and CRITICAL

@@ -30,22 +30,24 @@ docker image inspect "$image" > /dev/null
 docker save --output "$scan_tmp/image.tar" "$image"
 scanner_args=(run --rm
   --mount "type=bind,src=$scan_tmp,dst=/scan,readonly"
-  --mount "type=bind,src=$report_dir,dst=/reports"
+  --mount "type=bind,src=$report_dir,dst=/reports,readonly"
   --mount "type=bind,src=$project_dir/.cache/trivy,dst=/root/.cache/trivy"
   "$scanner")
 
 # Keep all severities in the reports; enforce the threshold during conversion.
 # Scanner/database failures stop here, rather than producing a passing result.
+# Redirect stdout in the caller's shell so report files belong to the runner,
+# rather than root inside the container (including empty clean-scan reports).
 docker "${scanner_args[@]}" image --config '' --input /scan/image.tar \
   --scanners vuln --pkg-types os,library --ignore-unfixed=false --ignorefile /dev/null \
-  --format json --output /reports/trivy.json --exit-code 0 --timeout 15m
+  --format json --exit-code 0 --timeout 15m > "$report_dir/trivy.json"
 docker "${scanner_args[@]}" convert --config '' --scanners vuln --ignorefile /dev/null \
-  --format sarif --output /reports/trivy.sarif /reports/trivy.json
+  --format sarif /reports/trivy.json > "$report_dir/trivy.sarif"
 
 scan_status=0
 docker "${scanner_args[@]}" convert --config '' --scanners vuln --ignorefile /dev/null \
-  --severity HIGH,CRITICAL --format table --table-mode detailed --output /reports/trivy.txt \
-  --exit-code 1 /reports/trivy.json || scan_status=$?
+  --severity HIGH,CRITICAL --format table --table-mode detailed \
+  --exit-code 1 /reports/trivy.json > "$report_dir/trivy.txt" || scan_status=$?
 if [[ "$scan_status" == 0 ]]; then
   if [[ ! -s "$report_dir/trivy.txt" ]]; then
     printf '%s\n' 'No HIGH or CRITICAL vulnerabilities detected.' > "$report_dir/trivy.txt"
