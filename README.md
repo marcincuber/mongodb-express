@@ -4,7 +4,7 @@ Build [mongo-express](https://github.com/mongo-express/mongo-express) directly f
 
 The image includes OIDC dependencies, compiled frontend assets, and production packages. It runs as UID/GID 1000 with `tini` forwarding signals to Node.js.
 
-The build is self-contained in the [Dockerfile](Dockerfile): it downloads the upstream tag, retains OIDC support, applies dependency security fixes, and builds frontend assets before installing production packages. Each version override documents the vulnerability it fixes. The runtime omits npm and Yarn. The upstream application and configuration remain unchanged.
+The build is self-contained in the [Dockerfile](Dockerfile): it downloads the upstream tag, retains OIDC support, applies dependency security fixes, and builds frontend assets before installing production packages. Each version override documents the vulnerability it fixes. A small runtime backport adds bounded database startup retries and database-aware readiness. The runtime omits npm and Yarn; upstream environment-variable configuration is preserved.
 
 ## Build and run
 
@@ -254,7 +254,11 @@ The examples use separate namespaces and credentials, so they can be deployed an
 
 Both examples follow [AWS's DocumentDB connection guidance](https://docs.aws.amazon.com/documentdb/latest/developerguide/connect_programmatically.html). They mount the public AWS CA bundle and explicitly set `ME_CONFIG_MONGODB_TLS_ALLOW_CERTS=false` to validate certificates. DocumentDB compatibility mode is experimental; not every MongoDB administrative operation is supported.
 
-The `/status` readiness probe checks the web application and can succeed when the database is unavailable. Confirm database connectivity in the UI and logs. After an initial connection failure, fix the settings or network access and restart the Deployment using the command in the selected example.
+The app attempts database initialization up to three times with two-second pauses and a 120-second overall deadline. It starts the web listener only after initialization succeeds, closes clients from failed attempts, and exits nonzero if retries or the deadline are exhausted. Kubernetes then restarts the container. The examples allow 150 seconds for the startup probe.
+
+The configured health endpoint (`/status` by default, relative to `ME_CONFIG_SITE_BASEURL`) pings the application's existing database clients. It returns HTTP 200 when every connection responds and HTTP 503 on failure, with a two-second probe deadline and no database error details in the response. Concurrent checks share a probe. Readiness recovers when the driver reconnects; TCP liveness stays independent of database availability, so an established process is not restarted solely because DocumentDB is temporarily unavailable.
+
+CI verifies startup retries, deadline exhaustion, invalid TLS rejection, and readiness failure/recovery against a temporary TLS-enabled MongoDB container. These tests do not replace validation against your actual DocumentDB cluster.
 
 ## Updating upstream
 

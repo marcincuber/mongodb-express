@@ -51,7 +51,7 @@ kubectl -n mongo-express port-forward service/mongo-express 8081:8081
 
 Open <http://localhost:8081> and enter the web credentials. Keep the port-forward command running. The forwarded connection uses Kubernetes API access; the application-to-DocumentDB connection uses validated TLS.
 
-The `/status` probe checks the web application and can succeed even if the database is unavailable. Confirm the database list loads in the UI. If the initial database connection fails, fix credentials or network access and restart the Deployment.
+The app retries database initialization three times within a 120-second deadline and exits nonzero on failure so Kubernetes can restart it. `/status` pings the application's existing database clients and returns HTTP 503 if the database is unavailable; readiness recovers after reconnection. TCP liveness stays independent of database availability. Use the UI and logs to confirm the expected databases and permissions.
 
 ## Operations and cleanup
 

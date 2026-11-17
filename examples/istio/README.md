@@ -84,7 +84,7 @@ curl --head "http://${MONGO_EXPRESS_HOST}/"
 curl --fail --show-error "https://${MONGO_EXPRESS_HOST}/status"
 ```
 
-HTTP should redirect to HTTPS. The status URL should return `{"status":"ok"}`. This release's status endpoint only checks the web application; confirm the DocumentDB database list loads after signing in.
+HTTP should redirect to HTTPS. The status URL returns `{"status":"ok"}` when the application's database connections respond, or HTTP 503 if they do not. Startup retries database initialization three times within a 120-second deadline before exiting nonzero. Kubernetes restarts failed startups; subsequent database outages affect readiness while TCP liveness keeps the web process running. Confirm the expected DocumentDB database list loads after signing in.
 
 To use an existing shared HTTPS Gateway, omit `gateway.yaml` when applying resources, update the VirtualService's `gateways` and `exportTo`, and ensure the shared Gateway allows the hostname and the `mongo-express-istio` namespace. Apply the remaining files explicitly:
 

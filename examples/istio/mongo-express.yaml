@@ -68,11 +68,13 @@ spec:
               cpu: "1"
               memory: 512Mi
           startupProbe:
+            # The app allows 120 seconds for database initialization before exiting.
             tcpSocket:
               port: http
             periodSeconds: 5
             failureThreshold: 30
           readinessProbe:
+            # Pings the application's existing database clients; returns 503 on failure.
             httpGet:
               path: /status
               port: http

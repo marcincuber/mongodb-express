@@ -39,6 +39,11 @@ jobs:
         run: python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Build fresh image
         run: docker build --pull --no-cache --platform "linux/${{ matrix.arch }}" -t "$IMAGE" .
+      - name: Test startup retries and readiness
+        run: |
+          docker run --rm --mount "type=bind,src=$PWD/tests,dst=/tests,readonly" \
+            "$IMAGE" node --test /tests/database-health.test.mjs
+          python3 tests/database-lifecycle.py "$IMAGE"
       - name: Scan OS and application packages; block HIGH and CRITICAL
         id: scan
         run: bash scripts/scan-image.sh "$IMAGE"
